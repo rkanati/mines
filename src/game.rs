@@ -100,6 +100,7 @@ impl State {
 
         // randomly position mines
         for _ in 0 .. config.n_mines {
+            // choose a spot, looping until we pick a spot we haven't picked before
             let ij = loop {
                 let i = rng.sample(&i_distro);
                 let j = rng.sample(&j_distro);
@@ -109,19 +110,16 @@ impl State {
                     TileKind::Mine => continue
                 }
             };
-            tiles[ij].kind = TileKind::Mine;
-        }
 
-        // compute nearby-mine counts
-        for j in 0 .. config.height as i32 {
-            for i in 0 .. config.width as i32 {
-                let ij = Coords::new(i, j);
-                for dj in -1 ..= 1 {
-                    for di in -1 ..= 1 {
-                        let adj = ij + V2::new(di, dj);
-                        if tiles.in_bounds(adj) && tiles[adj].kind == TileKind::Mine {
-                            tiles[ij].n_near += 1;
-                        }
+            // place the mine
+            tiles[ij].kind = TileKind::Mine;
+
+            // increase near-counts of adjacent tiles
+            for dj in -1 ..= 1 {
+                for di in -1 ..= 1 {
+                    let adj = ij + V2::new(di, dj);
+                    if tiles.in_bounds(adj) {
+                        tiles[adj].n_near += 1;
                     }
                 }
             }
@@ -149,29 +147,36 @@ impl State {
         state
     }
 
-    fn uncover(&mut self, ij: Coords) {
+    fn uncover(&mut self, ij: Coords) -> Option<bool> {
         let tile = &mut self.tiles[ij];
-        if tile.state == TileState::Covered(true) {
-            return;
+        if tile.state != TileState::Covered(false) {
+            return None;
         }
 
         tile.state = TileState::Uncovered;
 
         if tile.kind == TileKind::Mine {
             self.status = Status::Dead;
+            Some(true)
         }
-        else if tile.n_near == 0 {
-            flood_clear(&mut self.tiles, ij);
+        else {
+            if tile.n_near == 0 {
+                flood_clear(&mut self.tiles, ij);
+            }
+            Some(false)
         }
     }
 
-    pub fn dig(&mut self, ij: Coords) {
-        if self.done() { return; }
+    pub fn dig(&mut self, ij: Coords) -> Vec<(Coords, Option<bool>)> {
+        if self.done() { return Vec::new(); }
 
         let tile = &mut self.tiles[ij];
+
+        let mut results = Vec::new();
         match tile.state {
             TileState::Covered(false) => {
-                self.uncover(ij);
+                let boom = self.uncover(ij);
+                results.push((ij, boom));
             }
 
             TileState::Uncovered => {
@@ -179,16 +184,19 @@ impl State {
                     for di in -1 ..= 1 {
                         let adj = ij + V2::new(di, dj);
                         if self.tiles.in_bounds(adj) {
-                            self.uncover(adj);
+                            let boom = self.uncover(adj);
+                            results.push((adj, boom));
                         }
                     }
                 }
             }
 
             _ => { }
-        }
+        };
 
         self.check_win();
+
+        results
     }
 
     pub fn flag(&mut self, ij: Coords) {
@@ -241,6 +249,10 @@ impl State {
 
     pub fn flags_remaining(&self) -> usize {
         self.n_flags
+    }
+
+    pub fn dims(&self) -> V2<i32> {
+        V2::new(self.config.width as i32, self.config.height as i32)
     }
 }
 
